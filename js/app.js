@@ -1,11 +1,11 @@
 const App = (() => {
   const TITLES = {
-    dashboard: 'Dashboard', topics: 'Topic Selector', videos: 'Video Analyzer', hooks: 'Hook Lab',
+    dashboard: 'Dashboard', topics: 'Topic Selector', videos: 'Video Analyzer', titlestrategy: 'Title Strategy', hooks: 'Hook Lab',
     templates: 'Script Templates', checklist: 'Optimization Checklist', tracker: 'Performance Tracker',
     workflow: 'Weekly Workflow', phrases: 'Phrase Library',
   };
   const RENDERERS = {
-    dashboard: DashboardTab, topics: TopicsTab, videos: VideosTab, hooks: HooksTab,
+    dashboard: DashboardTab, topics: TopicsTab, videos: VideosTab, titlestrategy: TitleStrategyTab, hooks: HooksTab,
     templates: TemplatesTab, checklist: ChecklistTab, tracker: TrackerTab,
     workflow: WorkflowTab, phrases: PhrasesTab,
   };

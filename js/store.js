@@ -11,6 +11,7 @@ const DEFAULT_STATE = {
   baselines: [],
   weekly: {},
   phrases: [...SEED_PHRASES],
+  titleStrategy: { apiKey: '', analyses: [] },
 };
 
 const Store = (() => {

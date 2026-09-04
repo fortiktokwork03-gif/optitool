@@ -209,3 +209,13 @@ const SEED_PHRASES = [
   'Everyone believes ___, but actually ___',
   'This is why ___ (and it shocked me)',
 ];
+
+/* Common high-CTR "power words" used to fingerprint a channel's title style */
+const TITLE_POWER_WORDS = [
+  'secret', 'secrets', 'truth', 'never', 'always', 'best', 'worst', 'stop', 'mistake', 'mistakes',
+  'shocking', 'insane', 'crazy', 'proven', 'ultimate', 'easy', 'simple', 'free', 'new', 'exposed',
+  'warning', 'nobody', 'everyone', 'finally', 'instantly', 'guaranteed', 'honest', 'real', 'actually',
+  'why', 'how', 'what', 'this is', "don't", "you're", 'i tried', 'i made', 'i tested', 'vs',
+];
+
+const STOPWORDS = new Set(['a','an','the','and','or','but','of','to','in','on','for','is','are','was','were','with','this','that','it','my','your','you','i','me','be','at','as','by','from','how','why','what']);

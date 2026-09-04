@@ -42,6 +42,7 @@ const DashboardTab = (() => {
       <div class="grid grid-3">
         ${quickCard('🎯', 'Score a Topic', 'Run the 15-point Topic Score Card + saturation check before you commit.', 'topics')}
         ${quickCard('🔍', 'Analyze a Viral Video', 'Break down a competitor video: hook, retention pattern, structure, B-roll.', 'videos')}
+        ${quickCard('🎬', 'Title Strategy', "Paste a channel link, see what its top titles have in common, generate new ones for a subtopic.", 'titlestrategy')}
         ${quickCard('🪝', 'Build Your Hook', 'Tier 1-3 hook formulas, combo formulas, and a 3-variation hook tester.', 'hooks')}
         ${quickCard('📜', 'Pick a Structure', 'Problem-Solution, Story-Lesson, Data-Insight, or Top-X — with timing blocks.', 'templates')}
         ${quickCard('✅', 'Run the Checklist', 'Pre-writing, during-writing, post-writing and viral-angle checkpoints.', 'checklist')}
