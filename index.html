@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Opti Tool — Faceless Script Optimizer</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🚀</text></svg>" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<div class="app">
+
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="brand-mark">🚀</div>
+      <div class="brand-text">
+        <div class="brand-name">Opti Tool</div>
+        <div class="brand-sub">Faceless Script Optimizer</div>
+      </div>
+    </div>
+
+    <nav class="nav" id="nav">
+      <button class="nav-item active" data-tab="dashboard"><span class="nav-ico">🏠</span>Dashboard</button>
+      <button class="nav-item" data-tab="topics"><span class="nav-ico">🎯</span>Topic Selector</button>
+      <button class="nav-item" data-tab="videos"><span class="nav-ico">🔍</span>Video Analyzer</button>
+      <button class="nav-item" data-tab="hooks"><span class="nav-ico">🪝</span>Hook Lab</button>
+      <button class="nav-item" data-tab="templates"><span class="nav-ico">📜</span>Script Templates</button>
+      <button class="nav-item" data-tab="checklist"><span class="nav-ico">✅</span>Optimization Checklist</button>
+      <button class="nav-item" data-tab="tracker"><span class="nav-ico">📊</span>Performance Tracker</button>
+      <button class="nav-item" data-tab="workflow"><span class="nav-ico">🗓️</span>Weekly Workflow</button>
+      <button class="nav-item" data-tab="phrases"><span class="nav-ico">💬</span>Phrase Library</button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="footer-line">v1.0 · Sept 2026</div>
+      <div class="footer-line muted">All data stays in your browser</div>
+    </div>
+  </aside>
+
+  <div class="scrim" id="scrim"></div>
+
+  <!-- Main -->
+  <main class="main">
+    <header class="topbar">
+      <button class="hamburger" id="hamburger" aria-label="Toggle menu">☰</button>
+      <h1 class="page-title" id="pageTitle">Dashboard</h1>
+      <div class="topbar-actions">
+        <button class="btn btn-ghost" id="exportBtn" title="Export all data as JSON">⬇ Export</button>
+        <label class="btn btn-ghost" title="Import a previously exported JSON file">
+          ⬆ Import
+          <input type="file" id="importInput" accept="application/json" hidden />
+        </label>
+      </div>
+    </header>
+
+    <div class="content" id="content">
+      <!-- DASHBOARD -->
+      <section class="tab-panel active" id="tab-dashboard"></section>
+      <!-- TOPICS -->
+      <section class="tab-panel" id="tab-topics"></section>
+      <!-- VIDEOS -->
+      <section class="tab-panel" id="tab-videos"></section>
+      <!-- HOOKS -->
+      <section class="tab-panel" id="tab-hooks"></section>
+      <!-- TEMPLATES -->
+      <section class="tab-panel" id="tab-templates"></section>
+      <!-- CHECKLIST -->
+      <section class="tab-panel" id="tab-checklist"></section>
+      <!-- TRACKER -->
+      <section class="tab-panel" id="tab-tracker"></section>
+      <!-- WORKFLOW -->
+      <section class="tab-panel" id="tab-workflow"></section>
+      <!-- PHRASES -->
+      <section class="tab-panel" id="tab-phrases"></section>
+    </div>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="js/data.js"></script>
+<script src="js/store.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/tabs/dashboard.js"></script>
+<script src="js/tabs/topics.js"></script>
+<script src="js/tabs/videos.js"></script>
+<script src="js/tabs/hooks.js"></script>
+<script src="js/tabs/templates.js"></script>
+<script src="js/tabs/checklist.js"></script>
+<script src="js/tabs/tracker.js"></script>
+<script src="js/tabs/workflow.js"></script>
+<script src="js/tabs/phrases.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
