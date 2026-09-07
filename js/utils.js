@@ -83,3 +83,40 @@ function downloadJSON(data, filename) {
 function confirmDelete(msg) {
   return window.confirm(msg || 'Delete this item? This cannot be undone.');
 }
+
+/* ---- YouTube Data API v3 helpers (shared by Title Strategy + Video Analyzer) ---- */
+
+async function ytApiFetch(path, params, apiKey) {
+  const url = new URL(`https://www.googleapis.com/youtube/v3/${path}`);
+  Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+  url.searchParams.set('key', apiKey);
+  const res = await fetch(url.toString());
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const reason = data?.error?.errors?.[0]?.reason || data?.error?.status || res.status;
+    const msg = data?.error?.message || 'Request failed';
+    const err = new Error(msg); err.reason = reason; throw err;
+  }
+  return data;
+}
+
+function extractYouTubeVideoId(input) {
+  const raw = input.trim();
+  let m = raw.match(/[?&]v=([\w-]{11})/); if (m) return m[1];
+  m = raw.match(/youtu\.be\/([\w-]{11})/); if (m) return m[1];
+  m = raw.match(/\/shorts\/([\w-]{11})/); if (m) return m[1];
+  m = raw.match(/\/embed\/([\w-]{11})/); if (m) return m[1];
+  if (/^[\w-]{11}$/.test(raw)) return raw;
+  return null;
+}
+
+function aiAvailable() {
+  return typeof window !== 'undefined' && !!window.claude;
+}
+
+function parseISODuration(iso) {
+  const m = String(iso || '').match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+  if (!m) return 0;
+  const h = Number(m[1] || 0), min = Number(m[2] || 0), s = Number(m[3] || 0);
+  return h * 60 + min + s / 60;
+}

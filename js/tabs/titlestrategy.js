@@ -176,30 +176,16 @@ const TitleStrategyTab = (() => {
     return { type: 'handle', value: raw.startsWith('@') ? raw : '@' + raw };
   }
 
-  async function ytFetch(path, params, apiKey) {
-    const url = new URL(`https://www.googleapis.com/youtube/v3/${path}`);
-    Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
-    url.searchParams.set('key', apiKey);
-    const res = await fetch(url.toString());
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const reason = data?.error?.errors?.[0]?.reason || data?.error?.status || res.status;
-      const msg = data?.error?.message || 'Request failed';
-      const err = new Error(msg); err.reason = reason; throw err;
-    }
-    return data;
-  }
-
   async function fetchChannel(apiKey, parsed) {
     const params = { part: 'snippet,contentDetails,statistics' };
     if (parsed.type === 'id') params.id = parsed.value; else params.forHandle = parsed.value;
-    let data = await ytFetch('channels', params, apiKey);
+    let data = await ytApiFetch('channels', params, apiKey);
     if ((!data.items || !data.items.length) && parsed.type === 'handle') {
       // fallback to search if forHandle doesn't resolve
-      const search = await ytFetch('search', { part: 'snippet', q: parsed.value.replace(/^@/, ''), type: 'channel', maxResults: 1 }, apiKey);
+      const search = await ytApiFetch('search', { part: 'snippet', q: parsed.value.replace(/^@/, ''), type: 'channel', maxResults: 1 }, apiKey);
       const chId = search.items?.[0]?.snippet?.channelId || search.items?.[0]?.id?.channelId;
       if (!chId) throw new Error('Channel not found');
-      data = await ytFetch('channels', { part: 'snippet,contentDetails,statistics', id: chId }, apiKey);
+      data = await ytApiFetch('channels', { part: 'snippet,contentDetails,statistics', id: chId }, apiKey);
     }
     const item = data.items && data.items[0];
     if (!item) throw new Error('Channel not found');
@@ -217,7 +203,7 @@ const TitleStrategyTab = (() => {
     let ids = [];
     let pageToken = '';
     while (ids.length < maxVideos) {
-      const data = await ytFetch('playlistItems', {
+      const data = await ytApiFetch('playlistItems', {
         part: 'contentDetails', playlistId, maxResults: 50, ...(pageToken ? { pageToken } : {}),
       }, apiKey);
       ids.push(...(data.items || []).map(i => i.contentDetails.videoId));
@@ -231,7 +217,7 @@ const TitleStrategyTab = (() => {
     const out = [];
     for (let i = 0; i < ids.length; i += 50) {
       const chunk = ids.slice(i, i + 50);
-      const data = await ytFetch('videos', { part: 'snippet,statistics', id: chunk.join(',') }, apiKey);
+      const data = await ytApiFetch('videos', { part: 'snippet,statistics', id: chunk.join(',') }, apiKey);
       (data.items || []).forEach(v => {
         out.push({
           id: v.id, title: v.snippet.title, publishedAt: v.snippet.publishedAt,
@@ -275,10 +261,6 @@ const TitleStrategyTab = (() => {
       }),
       topWords, topPowerWords,
     };
-  }
-
-  function aiAvailable() {
-    return typeof window !== 'undefined' && !!window.claude;
   }
 
   async function generateAITitles(a, subtopic) {

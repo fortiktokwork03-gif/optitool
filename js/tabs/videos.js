@@ -10,6 +10,11 @@ const VideosTab = (() => {
 
   let draft = freshDraft();
   let editingId = null;
+  let linkInput = '';
+  let autoLoading = false;
+  let autoLoadingMsg = '';
+  let autoError = '';
+  let autoNote = null; // { real: [...], inferred: [...], source: 'ai'|'rules' } after a successful auto-fill
 
   function freshDraft() {
     return {
@@ -29,6 +34,33 @@ const VideosTab = (() => {
       <div class="section-head">
         <h2>Viral Video Analysis System</h2>
         <p>Break down each of the top-10 videos in your niche, then let the tool extract winning patterns once you've logged a few.</p>
+      </div>
+
+      <div class="card" style="margin-bottom:16px;">
+        <div class="card-title">Analyze From a Video Link</div>
+        <div class="card-sub">Paste one video's link — the tool pulls its real stats via the YouTube Data API and auto-fills the whole breakdown below${aiAvailable() ? ' (Claude fills in the judgment calls)' : ' using pattern-matching (open the Artifact link for AI-written analysis)'}.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+          <div class="field" style="flex:1;min-width:180px;margin-bottom:0;">
+            <label>YouTube API key</label>
+            <input type="text" value="${esc(Store.get('titleStrategy').apiKey)}" placeholder="AIza..." oninput="VideosTab.setApiKey(this.value)" />
+          </div>
+          <div class="field" style="flex:2;min-width:260px;margin-bottom:0;">
+            <label>Video link</label>
+            <input type="text" value="${esc(linkInput)}" placeholder="https://www.youtube.com/watch?v=..."
+              oninput="VideosTab.setLinkInput(this.value)" onkeydown="if(event.key==='Enter'){VideosTab.autoFill();}" />
+          </div>
+          <button class="btn btn-primary" ${autoLoading ? 'disabled' : ''} onclick="VideosTab.autoFill()">${autoLoading ? '⏳ ' + esc(autoLoadingMsg) : '⚡ Auto-Fill Breakdown'}</button>
+        </div>
+        ${autoError ? `<div class="badge badge-bad" style="margin-top:10px;display:inline-block;">${esc(autoError)}</div>` : ''}
+        ${autoNote ? `
+          <div class="divider"></div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
+            <span class="badge ${autoNote.source === 'ai' ? 'badge-good' : 'badge-info'}">${autoNote.source === 'ai' ? 'AI-assisted' : 'Pattern-matched'}</span>
+            <span class="hint">Fields filled below — review before saving</span>
+          </div>
+          <div class="hint"><strong style="color:var(--good);">From the API (real):</strong> ${autoNote.real.join(', ')}</div>
+          <div class="hint" style="margin-top:4px;"><strong style="color:var(--warn);">Inferred from title/description — verify by watching:</strong> ${autoNote.inferred.join(', ')}</div>
+        ` : ''}
       </div>
 
       <div class="card">
@@ -210,5 +242,148 @@ const VideosTab = (() => {
     render();
   }
 
-  return { render, set, setStruct, setPhrase, saveVideo, editVideo, cancelEdit, deleteVideo };
+  // ---------------- auto-fill from a single video link ----------------
+  function setApiKey(v) { Store.update('titleStrategy', ts => ({ ...ts, apiKey: v })); }
+  function setLinkInput(v) { linkInput = v; }
+
+  async function fetchVideoAndChannel(apiKey, videoId) {
+    const vdata = await ytApiFetch('videos', { part: 'snippet,statistics,contentDetails', id: videoId }, apiKey);
+    const v = vdata.items && vdata.items[0];
+    if (!v) throw new Error('Video not found — check the link');
+    let subscriberCount = null;
+    try {
+      const cdata = await ytApiFetch('channels', { part: 'statistics', id: v.snippet.channelId }, apiKey);
+      const c = cdata.items && cdata.items[0];
+      if (c) subscriberCount = Number(c.statistics.subscriberCount || 0);
+    } catch (e) { /* non-fatal */ }
+    return { v, subscriberCount };
+  }
+
+  function inferHook(title, description) {
+    const lower = (title + ' ' + (description || '').slice(0, 400)).toLowerCase();
+    let hookType = 'Statement';
+    if (/\?\s*$/.test(title.trim())) hookType = 'Question';
+    else if (/\d/.test(title)) hookType = 'Data';
+    else if (/\b(i|i'm|my)\b/i.test(title)) hookType = 'Story';
+    else if (/\b(mistake|problem|struggling|stuck)\b/i.test(lower)) hookType = 'Problem';
+
+    let emotion = 'Curiosity';
+    if (/secret|hidden|truth|nobody|shocking|weird trick/.test(lower)) emotion = 'Curiosity';
+    else if (/warning|mistake|stop|never|worst|danger/.test(lower)) emotion = 'Fear';
+    else if (/best|amazing|incredible|proven|ultimate|life.?chang/.test(lower)) emotion = 'Inspiration';
+    else if (/insane|crazy|shocking|unbelievable/.test(lower)) emotion = 'Surprise';
+
+    const matchedPower = TITLE_POWER_WORDS.filter(w => lower.includes(w));
+    const effectiveness = matchedPower.length >= 3 ? 'Viral' : matchedPower.length === 2 ? 'Strong' : matchedPower.length === 1 ? 'Moderate' : 'Weak';
+    return { hookType, emotion, effectiveness, matchedPower };
+  }
+
+  function guessTemplateName(title) {
+    const t = title.toLowerCase();
+    if (/\d+\s*(ways|tips|reasons|things|secrets|tools|mistakes|hacks|steps|signs)/.test(t)) return 'Top-X Listicle';
+    if (/\b(data|stats|statistics|study|research|report|%|million|billion)\b/.test(t)) return 'Data-Insight';
+    if (/\b(i |my |story|journey|how i)\b/.test(t)) return 'Story-Lesson';
+    return 'Problem-Solution';
+  }
+
+  function guessTone(title) {
+    if (/\b(i|my)\b/i.test(title)) return 'Conversational';
+    if (/\d/.test(title)) return 'Educational';
+    if (/!|shocking|insane|crazy/i.test(title)) return 'Emotional';
+    return 'Authoritative';
+  }
+
+  function extractTactics(description) {
+    const tactics = [];
+    const d = (description || '').toLowerCase();
+    if (/comment below|let me know|what do you think/.test(d)) tactics.push('Asks viewers to comment');
+    if (/subscribe/.test(d)) tactics.push('Subscribe CTA in description');
+    if (/link in (the )?description|check out|click here|shop now/.test(d)) tactics.push('External link CTA');
+    if (/\d\d:\d\d/.test(d)) tactics.push('Timestamps included');
+    if (/part \d|part one|part two|series/.test(d)) tactics.push('Part of a series');
+    return tactics;
+  }
+
+  function extractPhrases(title, description) {
+    const text = `${title}. ${(description || '').slice(0, 500)}`;
+    const sentences = text.split(/[\n.!?]+/).map(s => s.trim()).filter(Boolean);
+    return sentences.filter(s => TITLE_POWER_WORDS.some(w => s.toLowerCase().includes(w))).slice(0, 5);
+  }
+
+  async function aiEnhanceBreakdown(title, description, stats) {
+    const sample = await claude.use('sample');
+    if (!sample) return null;
+    const prompt = `You are analyzing a YouTube video for a competitor breakdown. You only have the metadata below (no transcript/audio):
+Title: "${title}"
+Description (first 600 chars): "${(description || '').slice(0, 600)}"
+Views: ${stats.viewCount}, Likes: ${stats.likeCount}, Comments: ${stats.commentCount}, Length: ${stats.lengthMin} min
+
+Based ONLY on this metadata, give your best educated-guess analysis. Respond with ONLY a JSON object, no other text, in this exact shape:
+{"hookType":"Question|Statement|Problem|Story|Data","emotion":"Fear|Curiosity|Inspiration|Surprise|Anger","effectiveness":"Weak|Moderate|Strong|Viral","whyWorks":"1-2 sentence explanation","tone":"Authoritative|Conversational|Emotional|Educational|Comedic","structureTemplate":"Problem-Solution|Story-Lesson|Data-Insight|Top-X Listicle","phrases":["up to 5 short notable phrases pulled from the title/description"],"tactics":["up to 4 engagement tactics visible in the description, e.g. asks for comments, has a CTA link, timestamps"]}`;
+    const result = await sample.json(prompt, { modelTier: 'quick' });
+    return result;
+  }
+
+  async function autoFill() {
+    const apiKey = Store.get('titleStrategy').apiKey.trim();
+    if (!apiKey) { autoError = 'Add your YouTube API key first'; render(); return; }
+    const videoId = extractYouTubeVideoId(linkInput);
+    if (!videoId) { autoError = 'Paste a valid YouTube video link'; render(); return; }
+
+    autoError = ''; autoLoading = true; autoLoadingMsg = 'Fetching video data...'; autoNote = null; render();
+    try {
+      const { v, subscriberCount } = await fetchVideoAndChannel(apiKey, videoId);
+      const title = v.snippet.title;
+      const description = v.snippet.description || '';
+      const stats = {
+        viewCount: Number(v.statistics.viewCount || 0),
+        likeCount: Number(v.statistics.likeCount || 0),
+        commentCount: Number(v.statistics.commentCount || 0),
+        lengthMin: Math.round(parseISODuration(v.contentDetails.duration) * 10) / 10,
+      };
+
+      let ai = null;
+      if (aiAvailable()) {
+        autoLoadingMsg = 'Asking Claude for the judgment calls...'; render();
+        try { ai = await aiEnhanceBreakdown(title, description, stats); } catch (e) { console.error(e); }
+      }
+      const rule = inferHook(title, description);
+
+      draft = freshDraft();
+      draft.title = title;
+      draft.channel = v.snippet.channelTitle || '';
+      draft.subs = subscriberCount !== null ? String(subscriberCount) : '';
+      draft.views = String(stats.viewCount);
+      draft.likes = String(stats.likeCount);
+      draft.uploadDate = (v.snippet.publishedAt || '').slice(0, 10);
+      draft.totalLength = String(stats.lengthMin);
+      draft.hookType = ai?.hookType || rule.hookType;
+      draft.emotion = ai?.emotion || rule.emotion;
+      draft.effectiveness = ai?.effectiveness || rule.effectiveness;
+      draft.whyWorks = ai?.whyWorks || (rule.matchedPower.length ? `Uses proven power word(s): ${rule.matchedPower.join(', ')}` : '');
+      draft.tone = ai?.tone || guessTone(title);
+      const phrases = (ai?.phrases && ai.phrases.length ? ai.phrases : extractPhrases(title, description)).slice(0, 5);
+      draft.phrases = [0, 1, 2, 3, 4].map(i => phrases[i] || '');
+      const tactics = (ai?.tactics && ai.tactics.length ? ai.tactics : extractTactics(description));
+      draft.tactics = tactics.join(', ');
+      const template = ai?.structureTemplate || guessTemplateName(title);
+      draft.structure[0].text = `Suggested structure for this video: ${template}. Watch the video to fill in exact timings/content per beat below.`;
+
+      autoNote = {
+        source: ai ? 'ai' : 'rules',
+        real: ['title', 'channel', 'subscribers', 'views', 'likes', 'upload date', 'video length'],
+        inferred: ['emotion', 'hook type', 'effectiveness', 'why it works', 'tone', 'phrases', 'engagement tactics', 'suggested structure template'],
+      };
+      toast('Breakdown auto-filled — review and save');
+    } catch (err) {
+      console.error(err);
+      if (err.reason === 'quotaExceeded') autoError = 'YouTube API quota exceeded for today';
+      else if (err.reason === 'keyInvalid' || err.reason === 'badRequest') autoError = 'API key looks invalid';
+      else autoError = err.message || 'Could not fetch this video';
+    } finally {
+      autoLoading = false; render();
+    }
+  }
+
+  return { render, set, setStruct, setPhrase, saveVideo, editVideo, cancelEdit, deleteVideo, setApiKey, setLinkInput, autoFill };
 })();
