@@ -15,6 +15,16 @@ const VideosTab = (() => {
   let autoLoadingMsg = '';
   let autoError = '';
   let autoNote = null; // { real: [...], inferred: [...], source: 'ai'|'rules' } after a successful auto-fill
+  let mcpStatus = 'checking'; // 'checking' | 'connected' | 'unavailable'
+  let mcpChecked = false;
+
+  async function checkMcp() {
+    if (mcpChecked) return;
+    mcpChecked = true;
+    const mcp = await getMcp();
+    mcpStatus = mcp ? 'connected' : 'unavailable';
+    render();
+  }
 
   function freshDraft() {
     return {
@@ -29,7 +39,9 @@ const VideosTab = (() => {
   }
 
   function render() {
+    if (!mcpChecked) checkMcp();
     const root = document.getElementById('tab-videos');
+    const usingMcp = mcpStatus === 'connected';
     root.innerHTML = `
       <div class="section-head">
         <h2>Viral Video Analysis System</h2>
@@ -37,13 +49,17 @@ const VideosTab = (() => {
       </div>
 
       <div class="card" style="margin-bottom:16px;">
-        <div class="card-title">Analyze From a Video Link</div>
-        <div class="card-sub">Paste one video's link — the tool pulls its real stats via the YouTube Data API and auto-fills the whole breakdown below${aiAvailable() ? ' (Claude fills in the judgment calls)' : ' using pattern-matching (open the Artifact link for AI-written analysis)'}.</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+          <div class="card-title" style="margin-bottom:0;">Analyze From a Video Link</div>
+          ${usingMcp ? '<span class="badge badge-good">✓ Connected via NexLev</span>' : mcpStatus === 'checking' ? '<span class="badge badge-info">Checking connector...</span>' : ''}
+        </div>
+        <div class="card-sub">Paste one video's link — the tool pulls its real stats${usingMcp ? ' via your NexLev connector (no API key needed)' : ' via the YouTube Data API'} and auto-fills the whole breakdown below${aiAvailable() ? ' (Claude fills in the judgment calls)' : ' using pattern-matching (open the Artifact link for AI-written analysis)'}.</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+          ${usingMcp ? '' : `
           <div class="field" style="flex:1;min-width:180px;margin-bottom:0;">
             <label>YouTube API key</label>
             <input type="text" value="${esc(Store.get('titleStrategy').apiKey)}" placeholder="AIza..." oninput="VideosTab.setApiKey(this.value)" />
-          </div>
+          </div>`}
           <div class="field" style="flex:2;min-width:260px;margin-bottom:0;">
             <label>Video link</label>
             <input type="text" value="${esc(linkInput)}" placeholder="https://www.youtube.com/watch?v=..."
@@ -259,6 +275,39 @@ const VideosTab = (() => {
     return { v, subscriberCount };
   }
 
+  async function fetchVideoData(videoId) {
+    const mcp = mcpStatus === 'connected' ? await getMcp() : null;
+    if (mcp) {
+      const vd = await nexlevVideoDetails(mcp, videoId);
+      if (!vd || !vd.id) throw new Error('Video not found — check the link');
+      let subscriberCount = null;
+      try {
+        const about = await nexlevChannelAbout(mcp, { channel_id: vd.channelId });
+        if (about) subscriberCount = Number(about.subscriberCount || 0);
+      } catch (e) { /* non-fatal */ }
+      return {
+        title: vd.title, description: vd.description || '',
+        channelTitle: vd.channelTitle || '',
+        publishedAt: vd.publishedAt || vd.publishDate || '',
+        viewCount: Number(vd.viewCount) || 0, likeCount: Number(vd.likeCount) || 0, commentCount: null,
+        lengthMin: Math.round((Number(vd.lengthSeconds) || 0) / 60 * 10) / 10,
+        subscriberCount,
+      };
+    }
+    const apiKey = Store.get('titleStrategy').apiKey.trim();
+    if (!apiKey) throw new Error('Add your YouTube API key first, or connect the NexLev connector in claude.ai');
+    const { v, subscriberCount } = await fetchVideoAndChannel(apiKey, videoId);
+    return {
+      title: v.snippet.title, description: v.snippet.description || '',
+      channelTitle: v.snippet.channelTitle || '',
+      publishedAt: v.snippet.publishedAt || '',
+      viewCount: Number(v.statistics.viewCount || 0), likeCount: Number(v.statistics.likeCount || 0),
+      commentCount: Number(v.statistics.commentCount || 0),
+      lengthMin: Math.round(parseISODuration(v.contentDetails.duration) * 10) / 10,
+      subscriberCount,
+    };
+  }
+
   function inferHook(title, description) {
     const lower = (title + ' ' + (description || '').slice(0, 400)).toLowerCase();
     let hookType = 'Statement';
@@ -316,7 +365,7 @@ const VideosTab = (() => {
     const prompt = `You are analyzing a YouTube video for a competitor breakdown. You only have the metadata below (no transcript/audio):
 Title: "${title}"
 Description (first 600 chars): "${(description || '').slice(0, 600)}"
-Views: ${stats.viewCount}, Likes: ${stats.likeCount}, Comments: ${stats.commentCount}, Length: ${stats.lengthMin} min
+Views: ${stats.viewCount}, Likes: ${stats.likeCount}, Comments: ${stats.commentCount ?? 'not available'}, Length: ${stats.lengthMin} min
 
 Based ONLY on this metadata, give your best educated-guess analysis. Respond with ONLY a JSON object, no other text, in this exact shape:
 {"hookType":"Question|Statement|Problem|Story|Data","emotion":"Fear|Curiosity|Inspiration|Surprise|Anger","effectiveness":"Weak|Moderate|Strong|Viral","whyWorks":"1-2 sentence explanation","tone":"Authoritative|Conversational|Emotional|Educational|Comedic","structureTemplate":"Problem-Solution|Story-Lesson|Data-Insight|Top-X Listicle","phrases":["up to 5 short notable phrases pulled from the title/description"],"tactics":["up to 4 engagement tactics visible in the description, e.g. asks for comments, has a CTA link, timestamps"]}`;
@@ -325,38 +374,29 @@ Based ONLY on this metadata, give your best educated-guess analysis. Respond wit
   }
 
   async function autoFill() {
-    const apiKey = Store.get('titleStrategy').apiKey.trim();
-    if (!apiKey) { autoError = 'Add your YouTube API key first'; render(); return; }
     const videoId = extractYouTubeVideoId(linkInput);
     if (!videoId) { autoError = 'Paste a valid YouTube video link'; render(); return; }
 
     autoError = ''; autoLoading = true; autoLoadingMsg = 'Fetching video data...'; autoNote = null; render();
     try {
-      const { v, subscriberCount } = await fetchVideoAndChannel(apiKey, videoId);
-      const title = v.snippet.title;
-      const description = v.snippet.description || '';
-      const stats = {
-        viewCount: Number(v.statistics.viewCount || 0),
-        likeCount: Number(v.statistics.likeCount || 0),
-        commentCount: Number(v.statistics.commentCount || 0),
-        lengthMin: Math.round(parseISODuration(v.contentDetails.duration) * 10) / 10,
-      };
+      const data = await fetchVideoData(videoId);
+      const { title, description } = data;
 
       let ai = null;
       if (aiAvailable()) {
         autoLoadingMsg = 'Asking Claude for the judgment calls...'; render();
-        try { ai = await aiEnhanceBreakdown(title, description, stats); } catch (e) { console.error(e); }
+        try { ai = await aiEnhanceBreakdown(title, description, data); } catch (e) { console.error(e); }
       }
       const rule = inferHook(title, description);
 
       draft = freshDraft();
       draft.title = title;
-      draft.channel = v.snippet.channelTitle || '';
-      draft.subs = subscriberCount !== null ? String(subscriberCount) : '';
-      draft.views = String(stats.viewCount);
-      draft.likes = String(stats.likeCount);
-      draft.uploadDate = (v.snippet.publishedAt || '').slice(0, 10);
-      draft.totalLength = String(stats.lengthMin);
+      draft.channel = data.channelTitle || '';
+      draft.subs = data.subscriberCount !== null ? String(data.subscriberCount) : '';
+      draft.views = String(data.viewCount);
+      draft.likes = String(data.likeCount);
+      draft.uploadDate = (data.publishedAt || '').slice(0, 10);
+      draft.totalLength = String(data.lengthMin);
       draft.hookType = ai?.hookType || rule.hookType;
       draft.emotion = ai?.emotion || rule.emotion;
       draft.effectiveness = ai?.effectiveness || rule.effectiveness;
@@ -369,15 +409,18 @@ Based ONLY on this metadata, give your best educated-guess analysis. Respond wit
       const template = ai?.structureTemplate || guessTemplateName(title);
       draft.structure[0].text = `Suggested structure for this video: ${template}. Watch the video to fill in exact timings/content per beat below.`;
 
+      const realFields = ['title', 'channel', 'views', 'likes', 'upload date', 'video length'];
+      if (data.subscriberCount !== null) realFields.splice(2, 0, 'subscribers');
       autoNote = {
         source: ai ? 'ai' : 'rules',
-        real: ['title', 'channel', 'subscribers', 'views', 'likes', 'upload date', 'video length'],
+        real: realFields,
         inferred: ['emotion', 'hook type', 'effectiveness', 'why it works', 'tone', 'phrases', 'engagement tactics', 'suggested structure template'],
       };
       toast('Breakdown auto-filled — review and save');
     } catch (err) {
       console.error(err);
-      if (err.reason === 'quotaExceeded') autoError = 'YouTube API quota exceeded for today';
+      if (err.code) autoError = mcpErrorMessage(err);
+      else if (err.reason === 'quotaExceeded') autoError = 'YouTube API quota exceeded for today';
       else if (err.reason === 'keyInvalid' || err.reason === 'badRequest') autoError = 'API key looks invalid';
       else autoError = err.message || 'Could not fetch this video';
     } finally {

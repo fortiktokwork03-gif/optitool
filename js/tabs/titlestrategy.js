@@ -8,27 +8,57 @@ const TitleStrategyTab = (() => {
   let generating = false;
   let ideas = [];
   let ideasSource = ''; // 'ai' | 'rules'
+  let mcpStatus = 'checking'; // 'checking' | 'connected' | 'unavailable'
+  let mcpChecked = false;
+
+  async function checkMcp() {
+    if (mcpChecked) return;
+    mcpChecked = true;
+    const mcp = await getMcp();
+    mcpStatus = mcp ? 'connected' : 'unavailable';
+    render();
+  }
+
+  function renderSourceCard(ts) {
+    if (mcpStatus === 'checking') {
+      return `<div class="card-title">1 · Data Source</div><div class="hint">Checking for a connected NexLev connector...</div>`;
+    }
+    if (mcpStatus === 'connected') {
+      return `
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+          <div>
+            <div class="card-title" style="margin-bottom:2px;">1 · Data Source</div>
+            <div class="card-sub" style="margin-bottom:0;">Connected via your <strong>NexLev</strong> connector — no API key needed.</div>
+          </div>
+          <span class="badge badge-good">✓ Connected</span>
+        </div>
+        <div class="hint" style="margin-top:8px;">If a channel lookup ever fails with an auth error, reconnect NexLev in claude.ai Settings → Connectors.</div>`;
+    }
+    return `
+      <div class="card-title">1 · YouTube Data API Key</div>
+      <div class="card-sub">No NexLev connector detected in this view — free key from Google Cloud Console, stored only in your browser.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+        <div class="field" style="flex:1;min-width:240px;margin-bottom:0;">
+          <label>API key</label>
+          <input type="text" id="ytApiKeyInput" value="${esc(ts.apiKey)}" placeholder="AIza..." oninput="TitleStrategyTab.setApiKey(this.value)" />
+        </div>
+        <button class="btn btn-ghost btn-sm" onclick="TitleStrategyTab.toggleKeyVisible()">👁 Show/Hide</button>
+      </div>
+      <div class="hint" style="margin-top:8px;">Don't have one? Google Cloud Console → APIs & Services → enable "YouTube Data API v3" → Credentials → Create API Key. Or connect the NexLev connector in claude.ai Settings → Connectors to skip this.</div>`;
+  }
 
   function render() {
+    if (!mcpChecked) checkMcp();
     const root = document.getElementById('tab-titlestrategy');
     const ts = Store.get('titleStrategy');
     root.innerHTML = `
       <div class="section-head">
         <h2>Title Strategy Analyzer</h2>
-        <p>Paste any channel's link, pull its real upload history via the YouTube Data API, and see exactly what its highest-performing titles have in common — then generate new title ideas in that same style for a subtopic of your choice.</p>
+        <p>Paste any channel's link, pull its real upload history, and see exactly what its highest-performing titles have in common — then generate new title ideas in that same style for a subtopic of your choice.</p>
       </div>
 
       <div class="card" style="margin-bottom:16px;">
-        <div class="card-title">1 · YouTube Data API Key</div>
-        <div class="card-sub">Free from Google Cloud Console — stored only in your browser, never leaves this device.</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
-          <div class="field" style="flex:1;min-width:240px;margin-bottom:0;">
-            <label>API key</label>
-            <input type="text" id="ytApiKeyInput" value="${esc(ts.apiKey)}" placeholder="AIza..." oninput="TitleStrategyTab.setApiKey(this.value)" />
-          </div>
-          <button class="btn btn-ghost btn-sm" onclick="TitleStrategyTab.toggleKeyVisible()">👁 Show/Hide</button>
-        </div>
-        <div class="hint" style="margin-top:8px;">Don't have one? Google Cloud Console → APIs & Services → enable "YouTube Data API v3" → Credentials → Create API Key. Free tier covers thousands of analyses/day.</div>
+        ${renderSourceCard(ts)}
       </div>
 
       <div class="card" style="margin-bottom:16px;">
@@ -42,7 +72,7 @@ const TitleStrategyTab = (() => {
         ${errorMsg ? `<div class="badge badge-bad" style="margin-top:10px;display:inline-block;">${esc(errorMsg)}</div>` : ''}
       </div>
 
-      ${current ? renderAnalysis(current) : `<div class="empty-state"><div class="emoji">🎬</div>Paste an API key + channel link above to pull real title data and see the strategy behind it.</div>`}
+      ${current ? renderAnalysis(current) : `<div class="empty-state"><div class="emoji">🎬</div>Paste a channel link above to pull real title data and see the strategy behind it.</div>`}
 
       <div style="margin-top:24px;">
         <h3 style="font-size:16px;margin-bottom:12px;">Saved Channel Analyses</h3>
@@ -317,24 +347,67 @@ const TitleStrategyTab = (() => {
   function setChannelInput(v) { channelInput = v; }
   function setSubtopic(v) { subtopic = v; }
 
+  async function analyzeViaMcp(mcp) {
+    loadingMsg = 'Resolving channel...'; render();
+    const channelId = await resolveChannelId(mcp, channelInput);
+
+    loadingMsg = 'Fetching channel info...'; render();
+    const about = await nexlevChannelAbout(mcp, { channel_id: channelId }).catch(() => null);
+
+    loadingMsg = 'Fetching uploads (sorted by popularity)...'; render();
+    let raw = []; let token; let metaTitle = '';
+    for (let page = 0; page < 3 && raw.length < 120; page++) {
+      const data = await nexlevChannelVideos(mcp, channelId, 'popular', token);
+      if (!metaTitle) metaTitle = data.meta?.title || '';
+      raw.push(...(data.data || []));
+      token = data.continuation;
+      if (!token) break;
+    }
+
+    const titles = raw
+      .filter(v => v.videoId && v.title)
+      .map(v => ({ id: v.videoId, title: v.title, publishedAt: v.publishedAt || v.publishDate, viewCount: Number(v.viewCount) || 0 }));
+    const topTitles = titles.slice().sort((a, b) => b.viewCount - a.viewCount).slice(0, Math.max(10, Math.round(titles.length * 0.2)));
+    const patterns = extractPatterns(topTitles);
+    const channel = {
+      id: channelId,
+      title: about?.title || metaTitle || channelInput,
+      thumbnail: about?.avatar?.[0]?.url || '',
+      subscriberCount: about?.subscriberCount || 0,
+      videoCount: Number(about?.videosCount) || titles.length,
+    };
+    current = { id: uid(), channel, titles, topTitles, patterns, createdAt: new Date().toISOString() };
+  }
+
+  async function analyzeViaApiKey(apiKey) {
+    loadingMsg = 'Finding channel...'; render();
+    const parsed = parseChannelInput(channelInput);
+    const channel = await fetchChannel(apiKey, parsed);
+    loadingMsg = 'Fetching uploads...'; render();
+    const ids = await fetchUploadIds(apiKey, channel.uploadsPlaylistId, 100);
+    loadingMsg = `Reading stats for ${ids.length} videos...`; render();
+    const titles = await fetchVideoStats(apiKey, ids);
+    const topTitles = titles.slice().sort((a, b) => b.viewCount - a.viewCount).slice(0, Math.max(10, Math.round(titles.length * 0.2)));
+    const patterns = extractPatterns(topTitles);
+    current = { id: uid(), channel, titles, topTitles, patterns, createdAt: new Date().toISOString() };
+  }
+
   async function analyze() {
-    const ts = Store.get('titleStrategy');
-    if (!ts.apiKey.trim()) { errorMsg = 'Add your YouTube API key first'; render(); return; }
     if (!channelInput.trim()) { errorMsg = 'Paste a channel link or handle'; render(); return; }
-    errorMsg = ''; loading = true; ideas = []; loadingMsg = 'Finding channel...'; render();
+    errorMsg = ''; loading = true; ideas = []; loadingMsg = 'Starting...'; render();
     try {
-      const parsed = parseChannelInput(channelInput);
-      const channel = await fetchChannel(ts.apiKey.trim(), parsed);
-      loadingMsg = 'Fetching uploads...'; render();
-      const ids = await fetchUploadIds(ts.apiKey.trim(), channel.uploadsPlaylistId, 100);
-      loadingMsg = `Reading stats for ${ids.length} videos...`; render();
-      const titles = await fetchVideoStats(ts.apiKey.trim(), ids);
-      const topTitles = titles.slice().sort((a, b) => b.viewCount - a.viewCount).slice(0, Math.max(10, Math.round(titles.length * 0.2)));
-      const patterns = extractPatterns(topTitles);
-      current = { id: uid(), channel, titles, topTitles, patterns, createdAt: new Date().toISOString() };
+      const mcp = mcpStatus === 'connected' ? await getMcp() : null;
+      if (mcp) {
+        await analyzeViaMcp(mcp);
+      } else {
+        const apiKey = Store.get('titleStrategy').apiKey.trim();
+        if (!apiKey) throw new Error('Add your YouTube API key first, or connect the NexLev connector in claude.ai');
+        await analyzeViaApiKey(apiKey);
+      }
     } catch (err) {
       console.error(err);
-      if (err.reason === 'quotaExceeded') errorMsg = 'YouTube API quota exceeded for today';
+      if (err.code) errorMsg = mcpErrorMessage(err);
+      else if (err.reason === 'quotaExceeded') errorMsg = 'YouTube API quota exceeded for today';
       else if (err.reason === 'keyInvalid' || err.reason === 'badRequest') errorMsg = 'API key looks invalid';
       else errorMsg = err.message || 'Could not analyze this channel';
     } finally {

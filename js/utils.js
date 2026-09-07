@@ -120,3 +120,55 @@ function parseISODuration(iso) {
   const h = Number(m[1] || 0), min = Number(m[2] || 0), s = Number(m[3] || 0);
   return h * 60 + min + s / 60;
 }
+
+/* ---- NexLev MCP connector helpers (no API key needed when available) ---- */
+
+const NEXLEV_SERVER = 'NexLev';
+
+async function getMcp() {
+  if (typeof window === 'undefined' || !window.claude) return null;
+  try { return await claude.use('mcp'); } catch (e) { return null; }
+}
+
+function mcpErrorMessage(err) {
+  const map = {
+    needs_reauth: 'Reconnect NexLev in claude.ai Settings → Connectors, then try again.',
+    server_not_connected: 'Add the NexLev connector in claude.ai Settings → Connectors, then try again.',
+    selection_required: 'Choose which NexLev connector to use in the prompt, then try again.',
+    not_granted: 'This view does not have connector access.',
+    capability_disabled: 'Connector access is unavailable in this view.',
+    blocked_by_policy: 'Your organization has blocked this action.',
+    approval_required: 'This action needs approval before it can run.',
+    server_unavailable: 'NexLev is temporarily unreachable — try again in a moment.',
+    tool_error: err?.message || 'NexLev reported an error for that request.',
+  };
+  return map[err?.code] || err?.message || 'Could not reach NexLev';
+}
+
+async function nexlevResolveChannel(mcp, input) {
+  const res = await mcp.callTool(NEXLEV_SERVER, 'channel_resolver', { input });
+  return res.payload;
+}
+async function nexlevChannelAbout(mcp, params) {
+  const res = await mcp.callTool(NEXLEV_SERVER, 'youtube_channel_about', params);
+  return res.payload;
+}
+async function nexlevChannelVideos(mcp, channelId, sortBy, token) {
+  const input = { channel_id: channelId };
+  if (sortBy) input.sort_by = sortBy;
+  if (token) input.token = token;
+  const res = await mcp.callTool(NEXLEV_SERVER, 'youtube_channel_videos', input);
+  return res.payload;
+}
+async function nexlevVideoDetails(mcp, videoId) {
+  const res = await mcp.callTool(NEXLEV_SERVER, 'youtube_video_details', { video_id: videoId });
+  return res.payload;
+}
+
+async function resolveChannelId(mcp, input) {
+  const raw = input.trim();
+  if (/^UC[\w-]{10,}$/.test(raw)) return raw;
+  const resolved = await nexlevResolveChannel(mcp, raw);
+  if (!resolved || !resolved.channelId) throw new Error('Channel not found');
+  return resolved.channelId;
+}
